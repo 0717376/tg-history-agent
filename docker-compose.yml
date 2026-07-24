@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    volumes:
+      - ./data:/app/data                                      # индекс, telethon- и агент-сессии
+      - ${CLAUDE_DIR:-~/.claude}:/root/.claude                # креды Claude CLI (рефреш токена сюда)
+      - ${CLAUDE_JSON:-~/.claude.json}:/seed/.claude.json:ro  # конфиг-seed (копируется в HOME при старте)
+    environment:
+      - TG_API_ID=${TG_API_ID}
+      - TG_API_HASH=${TG_API_HASH}
+      - TG_TARGET_CHAT=${TG_TARGET_CHAT}
+      - TG_BOT_TOKEN=${TG_BOT_TOKEN}
+      - TG_ALLOWED_IDS=${TG_ALLOWED_IDS}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-sonnet}
+      - SESSION_FRESH_HOURS=${SESSION_FRESH_HOURS:-6}
+      - TZ=${TZ:-Europe/Moscow}
+    restart: unless-stopped
