@@ -27,6 +27,9 @@ logger = logging.getLogger("tgqa.agent")
 # Одна очередь на все чаты: turn'ы не гоняем параллельно.
 lock = asyncio.Lock()
 
+EXPIRED_NOTE = ("[Прошлый разговор закрыт по неактивности — это начало нового. "
+                "Историю прошлой переписки не выдумывай.]\n")
+
 ERR_RUN = "Что-то пошло не так при обработке запроса."
 ERR_SESSION = "Ошибка Claude (возможно, переполнен контекст). Сессия сброшена — повторите вопрос."
 
@@ -44,18 +47,28 @@ def _save_all(d: dict) -> None:
     config.AGENT_SESSIONS.write_text(json.dumps(d))
 
 
-def load_session(chat_id: int) -> str | None:
+def load_session_state(chat_id: int) -> tuple[str | None, bool]:
+    """(session_id, expired): сессия в простое дольше SESSION_FRESH_HOURS отбрасывается."""
     e = _load_all().get(str(chat_id))
     if not e:
-        return None
-    if config.SESSION_FRESH_HOURS > 0:
+        return None, False
+    sid = e.get("session_id")
+    if sid and config.SESSION_FRESH_HOURS > 0:
         try:
             idle = datetime.now() - datetime.fromisoformat(e["last_used"])
             if idle > timedelta(hours=config.SESSION_FRESH_HOURS):
-                return None
+                logger.info("сессия чата %s протухла (простой > %sч) — начинаем заново",
+                            chat_id, config.SESSION_FRESH_HOURS)
+                clear_session(chat_id)
+                return None, True
         except (KeyError, ValueError):
-            return None
-    return e.get("session_id")
+            clear_session(chat_id)
+            return None, False
+    return sid, False
+
+
+def load_session(chat_id: int) -> str | None:
+    return load_session_state(chat_id)[0]
 
 
 def save_session(chat_id: int, session_id: str | None) -> None:
@@ -77,7 +90,10 @@ def session_age(chat_id: int) -> str | None:
     e = _load_all().get(str(chat_id))
     if not e:
         return None
-    mins = int((datetime.now() - datetime.fromisoformat(e["last_used"])).total_seconds() // 60)
+    idle = datetime.now() - datetime.fromisoformat(e["last_used"])
+    if config.SESSION_FRESH_HOURS > 0 and idle > timedelta(hours=config.SESSION_FRESH_HOURS):
+        return None
+    mins = int(idle.total_seconds() // 60)
     return f"{mins // 60}ч {mins % 60}м назад" if mins >= 60 else f"{mins}м назад"
 
 
@@ -154,14 +170,15 @@ async def run_collect(chat_id: int, message: str,
     async with lock:
         message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}]\n{message}"
         for attempt in (1, 2):  # вторая попытка — только после сброса протухшей сессии
-            sid = load_session(chat_id)
+            sid, expired = load_session_state(chat_id)
+            prompt = (EXPIRED_NOTE + message) if expired else message
             texts: list[str] = []
             partial = ""
             result_text = ""
             final_sid = sid
             had_error = False
             try:
-                async for m in query(prompt=message, options=build_options(sid)):
+                async for m in query(prompt=prompt, options=build_options(sid)):
                     if isinstance(m, StreamEvent) and on_delta:
                         ev = m.event
                         delta = ev.get("delta", {}) if ev.get("type") == "content_block_delta" else {}
