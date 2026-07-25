@@ -40,6 +40,17 @@ CREATE TABLE IF NOT EXISTS topics(
 );
 CREATE TABLE IF NOT EXISTS members(user_id INTEGER PRIMARY KEY, name TEXT, updated TEXT);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS usage(          -- журнал обращений к боту
+  ts TEXT NOT NULL,
+  user_id INTEGER,
+  name TEXT,
+  scope TEXT,                              -- private|group
+  question TEXT,
+  secs REAL,
+  cost REAL,
+  ok INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage(ts);
 """
 
 _conn: sqlite3.Connection | None = None
@@ -108,6 +119,11 @@ def bounds() -> tuple[int | None, int | None, int]:
     return row["a"], row["b"], row["c"]
 
 
+def recent_ids(limit: int) -> set[int]:
+    return {r["id"] for r in
+            conn().execute("SELECT id FROM messages ORDER BY id DESC LIMIT ?", (limit,))}
+
+
 def replace_members(pairs: list[tuple[int, str]]) -> None:
     """Полная замена снимка участников (пустой список игнорируем — не выпиливать всех)."""
     if not pairs:
@@ -127,6 +143,31 @@ def is_member(user_id: int) -> bool:
 
 def members_count() -> int:
     return conn().execute("SELECT COUNT(*) c FROM members").fetchone()["c"]
+
+
+# --- журнал обращений ---
+
+def log_usage(user_id: int | None, name: str | None, scope: str, question: str,
+              secs: float | None = None, ok: bool = True) -> None:
+    from datetime import datetime
+    conn().execute(
+        "INSERT INTO usage(ts,user_id,name,scope,question,secs,ok) VALUES(?,?,?,?,?,?,?)",
+        (datetime.now().isoformat(timespec="seconds"), user_id, name, scope,
+         question[:2000], secs, int(ok)))
+    conn().commit()
+
+
+def usage_summary(limit: int = 10) -> dict:
+    """Кто и сколько спрашивал: всего, за сутки, топ собеседников."""
+    c = conn()
+    row = c.execute("SELECT COUNT(*) n, SUM(ok=0) err, MIN(ts) a, MAX(ts) b FROM usage").fetchone()
+    day = c.execute("SELECT COUNT(*) n FROM usage "
+                    "WHERE ts > datetime('now','-1 day')").fetchone()["n"]
+    top = [dict(r) for r in c.execute(
+        "SELECT name, user_id, COUNT(*) n, MAX(ts) last FROM usage "
+        "GROUP BY user_id ORDER BY n DESC LIMIT ?", (limit,))]
+    return {"total": row["n"], "errors": row["err"] or 0, "first": row["a"], "last": row["b"],
+            "last_day": day, "top": top}
 
 
 # --- ссылки ---

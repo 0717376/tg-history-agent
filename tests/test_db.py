@@ -95,3 +95,18 @@ def test_stats_and_link_plain():
     s = db.stats()
     assert s["total"] == 1 and not s["is_forum"]
     assert db.link(1, topic_id=9) == "https://t.me/c/42/1"  # не форум — без топика в url
+
+
+def test_recent_ids():
+    for i in (1, 2, 3, 4):
+        add(i, f"m{i}")
+    assert db.recent_ids(2) == {3, 4}
+
+
+def test_usage_log_and_summary():
+    db.log_usage(7, "Denis", "private", "как работает поиск?", 12.5, True)
+    db.log_usage(7, "Denis", "private", "ещё вопрос", 3.0, False)
+    db.log_usage(8, "Danila", "group", "про квен", 5.0, True)
+    u = db.usage_summary()
+    assert u["total"] == 3 and u["errors"] == 1 and u["last_day"] == 3
+    assert [(r["name"], r["n"]) for r in u["top"]] == [("Denis", 2), ("Danila", 1)]

@@ -16,6 +16,8 @@ _entity = None
 _members_at = 0.0
 MEMBERS_MIN_INTERVAL = 600
 MEMBERS_PERIOD = 12 * 3600
+SWEEP_PERIOD = 300
+SWEEP_DEPTH = 200
 
 
 async def refresh_members(min_interval: float = MEMBERS_MIN_INTERVAL) -> None:
@@ -38,6 +40,23 @@ async def _members_loop() -> None:
     while True:
         await asyncio.sleep(MEMBERS_PERIOD)
         await refresh_members(min_interval=0)
+
+
+async def _sweep_loop(client: TelegramClient, entity) -> None:
+    """Сверка хвоста истории: live-события Telethon иногда теряются."""
+    while True:
+        await asyncio.sleep(SWEEP_PERIOD)
+        try:
+            known = db.recent_ids(SWEEP_DEPTH)
+            n = 0
+            async for m in client.iter_messages(entity, limit=SWEEP_DEPTH):
+                if m.id not in known and _store(m):
+                    n += 1
+            db.commit()
+            if n:
+                log.info("сверка: добрано %d пропущенных сообщений", n)
+        except Exception as e:
+            log.warning("сверка не удалась: %s", e)
 
 
 def _target() -> str | int:
@@ -161,7 +180,9 @@ async def run() -> None:
 
     await _sync_topics(client, entity)
     await refresh_members(min_interval=0)
-    asyncio.get_running_loop().create_task(_members_loop())
+    loop = asyncio.get_running_loop()
+    loop.create_task(_members_loop())
+    loop.create_task(_sweep_loop(client, entity))
 
     mn, mx, total = db.bounds()
     if mx:  # догнать новое, появившееся пока индексатор не работал

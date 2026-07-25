@@ -89,7 +89,7 @@ async def tg_api(client: httpx.AsyncClient, method: str, **params) -> dict:
             logger.warning("tg %s failed: %s", method, data.get("description"))
         return data
     except Exception as e:
-        logger.warning("tg %s error: %s", method, e)
+        logger.warning("tg %s error: %s", method, e or type(e).__name__)
         return {"ok": False}
 
 
@@ -148,7 +148,13 @@ async def is_group_member(client: httpx.AsyncClient, user_id: int) -> bool:
     return ok
 
 
-def build_status(chat_id: int) -> str:
+def _who(user: dict | None) -> tuple[int | None, str]:
+    u = user or {}
+    name = " ".join(x for x in (u.get("first_name"), u.get("last_name")) if x)
+    return u.get("id"), name or u.get("username") or "?"
+
+
+def build_status(chat_id: int, owner: bool = False) -> str:
     s = db.stats()
     lines = [
         f"**Группа:** {s['title']}",
@@ -158,12 +164,22 @@ def build_status(chat_id: int) -> str:
     ]
     age = agent.session_age(chat_id)
     lines.append(f"**Сессия:** {'активна, посл. запрос ' + age if age else 'нет'}")
+    if owner:
+        u = db.usage_summary()
+        lines.append(f"\n**Вопросов всего:** {u['total']} (за сутки {u['last_day']}"
+                     + (f", с ошибкой {u['errors']}" if u["errors"] else "") + ")")
+        for r in u["top"]:
+            lines.append(f"• {r['name'] or r['user_id']} — {r['n']}, посл. {str(r['last'])[:16]}")
     return "\n".join(lines)
 
 
 async def _answer(client: httpx.AsyncClient, chat_id: int, text: str,
+                  user: dict | None = None, scope: str = "private",
                   reply_to: int | None = None, thread_id: int | None = None,
                   use_draft: bool = True) -> None:
+    uid, name = _who(user)
+    logger.info("вопрос [%s] от %s (%s): %s", scope, name, uid, text[:150].replace("\n", " "))
+    started = time.monotonic()
     stop = asyncio.Event()
     typing = asyncio.create_task(tg_typing(client, chat_id, stop, thread_id))
     draft = {"at": 0.0, "ok": None, "capped": False,
@@ -190,6 +206,10 @@ async def _answer(client: httpx.AsyncClient, chat_id: int, text: str,
     finally:
         stop.set()
         await typing
+    secs = time.monotonic() - started
+    ok = reply not in (agent.ERR_RUN, agent.ERR_SESSION)
+    logger.info("ответ %s: %d символов за %.0fс", "ok" if ok else "ОШИБКА", len(reply), secs)
+    db.log_usage(uid, name, scope, text, secs, ok)
     await tg_send(client, chat_id, reply, reply_to=reply_to)
 
 
@@ -217,9 +237,9 @@ async def _handle_private(client: httpx.AsyncClient, msg: dict) -> None:
         agent.clear_session(chat_id)
         await tg_api(client, "sendMessage", chat_id=chat_id, text="Начал новую сессию.")
     elif text == "/status":
-        await tg_send(client, chat_id, build_status(chat_id))
+        await tg_send(client, chat_id, build_status(chat_id, owner=user_id in config.ALLOWED_IDS))
     else:
-        await _answer(client, chat_id, text)
+        await _answer(client, chat_id, text, user=msg.get("from"))
 
 
 async def _handle_group(client: httpx.AsyncClient, msg: dict, bot_username: str,
@@ -238,6 +258,7 @@ async def _handle_group(client: httpx.AsyncClient, msg: dict, bot_username: str,
     chat_id = msg["chat"]["id"]
     sender = (msg.get("from") or {}).get("first_name") or ""
     await _answer(client, chat_id, f"[Вопрос от {sender} в группе]\n{q}",
+                  user=msg.get("from"), scope="group",
                   reply_to=msg["message_id"], thread_id=msg.get("message_thread_id"),
                   use_draft=False)
 

@@ -27,6 +27,9 @@ logger = logging.getLogger("tgqa.agent")
 # Одна очередь на все чаты: turn'ы не гоняем параллельно.
 lock = asyncio.Lock()
 
+ERR_RUN = "Что-то пошло не так при обработке запроса."
+ERR_SESSION = "Ошибка Claude (возможно, переполнен контекст). Сессия сброшена — повторите вопрос."
+
 
 # --- per-chat сессии (data/agent_sessions.json) ---
 
@@ -127,8 +130,11 @@ def build_options(resume: str | None) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         model=config.CLAUDE_MODEL,
         system_prompt=_system_prompt(resume),
+        tools=[],  # без встроенных тулов Claude Code: allowed_tools набор не сужает
         allowed_tools=TOOL_NAMES,
         mcp_servers={"tg": server},
+        strict_mcp_config=True,
+        permission_mode="dontAsk",
         include_partial_messages=True,
         resume=resume,
         cwd=str(config.ROOT),
@@ -192,10 +198,10 @@ async def run_collect(chat_id: int, message: str,
                     clear_session(chat_id)
                     continue
                 logger.exception("run_collect failed")
-                return "Что-то пошло не так при обработке запроса."
+                return ERR_RUN
 
             save_session(chat_id, final_sid)
             if had_error:
                 clear_session(chat_id)
-                return "Ошибка Claude (возможно, переполнен контекст). Сессия сброшена — повторите вопрос."
+                return ERR_SESSION
             return (result_text or "\n\n".join(texts)).strip() or "(пустой ответ)"

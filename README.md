@@ -15,8 +15,8 @@ Telethon (your account) ──► SQLite FTS5 index ──► agent tools ──
 ```
 
 1. **Indexer** — a [Telethon](https://github.com/LonamiWebs/Telethon) client under *your* personal account (you are a member of the group) backfills the entire history into SQLite with FTS5, then keeps listening live: new messages, edits, deletions, forum topics, reactions, pinned flags, document filenames.
-2. **Agent** — a Claude agent whose only tools are 12 search primitives over that index. It searches *iteratively*: tries several query variants (FTS5 prefix wildcards to compensate for morphology), greps exact substrings (error codes, URLs), expands hits via context/threads, checks activity spikes, and only then answers.
-3. **Bot** — a plain Bot API long-polling bot. Private chat is gated by an allowlist and/or group membership (member snapshot taken via Telethon — the bot does not even need to be a member of the group). Inside the group it answers anyone who @mentions it. Streaming replies via `sendMessageDraft`.
+2. **Agent** — a Claude agent whose only tools are 12 search primitives over that index (`tools=[]` strips every built-in Claude Code tool — without it the agent has a shell inside your container and burns turns on subagent orchestration). It searches *iteratively*: tries several query variants (FTS5 prefix wildcards to compensate for morphology), greps exact substrings (error codes, URLs), expands hits via context/threads, checks activity spikes, and only then answers.
+3. **Bot** — a plain Bot API long-polling bot. Private chat is gated by an allowlist and/or group membership (member snapshot taken via Telethon — the bot does not even need to be a member of the group). Inside the group it answers anyone who @mentions it. Streaming replies via `sendMessageDraft`. Every question is logged to a `usage` table; `/status` shows who has been asking to ids listed in `TG_ALLOWED_IDS`.
 
 ### Agent tools
 
@@ -85,7 +85,7 @@ The compose file mounts `./data` (index + sessions) and your `~/.claude` (Claude
 - Media content is not indexed (photo captions and document filenames are).
 - Draft streaming needs Bot API 9.5+ clients; falls back to a typing indicator silently.
 - Agent prompts are in Russian — adjust `app/agent.py` for other languages.
-- No tests yet; the moving parts are thin wrappers around SQLite and two Telegram APIs.
+- Live updates can be dropped by Telegram (`PersistentTimestampOutdatedError`), so the indexer re-checks the tail of the history every 5 minutes and fills the gaps.
 
 ## License
 
