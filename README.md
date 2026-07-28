@@ -67,6 +67,8 @@ docker compose up -d --build
 
 The compose file mounts `./data` (index + sessions) and your `~/.claude` (Claude CLI OAuth credentials — token refresh persists there). Do the Telethon login on any machine and ship `data/user.session` along with the project; the backfill resumes from wherever it stopped.
 
+On a browser-less server, don't rely on that mounted session: it eventually stops refreshing, the CLI wipes the credentials, and the bot answers every question with an error until someone logs in by hand. Issue a long-lived token instead — run `claude setup-token` on a machine with a browser (valid for a year) and put the resulting string into `.env` as `CLAUDE_CODE_OAUTH_TOKEN`.
+
 ### Environment
 
 | Variable | Default | Purpose |
@@ -76,6 +78,7 @@ The compose file mounts `./data` (index + sessions) and your `~/.claude` (Claude
 | `TG_BOT_TOKEN` | — | bot token; empty disables the bot (indexer still runs) |
 | `TG_ALLOWED_IDS` | — | private-chat access: ids and/or the literal `group` (any group member may DM the bot) |
 | `CLAUDE_MODEL` | `sonnet` | agent model |
+| `CLAUDE_CODE_OAUTH_TOKEN` | — | long-lived token from `claude setup-token`; when set, used instead of the OAuth session in `~/.claude` |
 | `SESSION_FRESH_HOURS` | `6` | idle time after which a chat gets a fresh agent session |
 
 ## Notes & limitations
