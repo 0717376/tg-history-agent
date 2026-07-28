@@ -12,6 +12,10 @@ services:
       - TG_BOT_TOKEN=${TG_BOT_TOKEN}
       - TG_ALLOWED_IDS=${TG_ALLOWED_IDS}
       - CLAUDE_MODEL=${CLAUDE_MODEL:-sonnet}
+      # Долгоживущий токен из `claude setup-token` (год). Задан — CLI авторизуется им и не
+      # зависит от OAuth-сессии в ~/.claude: на сервере без браузера она однажды перестаёт
+      # обновляться, CLI обнуляет креды, и бот начинает отвечать ошибкой на каждый вопрос.
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - SESSION_FRESH_HOURS=${SESSION_FRESH_HOURS:-6}
       - TZ=${TZ:-Europe/Moscow}
     restart: unless-stopped
